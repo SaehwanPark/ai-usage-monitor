@@ -1,0 +1,1 @@
+"""Google Antigravity provider adapter."""
