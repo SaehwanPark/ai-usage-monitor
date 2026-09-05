@@ -145,7 +145,15 @@ def normalize_antigravity_user_status_legacy(
     for item in configs:
       if not isinstance(item, dict):
         continue
-      m_name = str(item.get("modelConfig", {}).get("model", "")).lower()
+      m_name = (
+        str(item.get("modelId") or "")
+        + " "
+        + str(item.get("label") or "")
+        + " "
+        + str(item.get("modelConfig", {}).get("model", ""))
+        + " "
+        + str(item.get("modelOrAlias", {}).get("model", ""))
+      ).lower()
       q_info = item.get("quotaInfo", {})
       if not isinstance(q_info, dict):
         continue
