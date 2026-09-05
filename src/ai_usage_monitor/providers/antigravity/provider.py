@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import time
 from typing import Any
 from ai_usage_monitor.config import load_config
 from ai_usage_monitor.model import ProviderUsage
@@ -23,15 +24,18 @@ def _probe_port(port: int, timeout_seconds: float) -> ProviderUsage | None:
   """Probe a single localhost port for Antigravity quota endpoints."""
   # 1. Preferred: RetrieveUserQuotaSummary
   summary_data: dict[str, Any] | None = None
-  try:
-    summary_data = post_loopback_json(
-      port=port,
-      path="/exa.language_server_pb.LanguageServerService/RetrieveUserQuotaSummary",
-      payload={"forceRefresh": True},
-      timeout_seconds=min(timeout_seconds, 3.0),
-    )
-  except Exception:
-    pass
+  for force_refresh in (True, False):
+    try:
+      summary_data = post_loopback_json(
+        port=port,
+        path="/exa.language_server_pb.LanguageServerService/RetrieveUserQuotaSummary",
+        payload={"forceRefresh": force_refresh},
+        timeout_seconds=min(timeout_seconds, 4.0),
+      )
+      if summary_data and summary_data.get("response", {}).get("groups"):
+        break
+    except Exception:
+      pass
 
   groups = (summary_data or {}).get("response", {}).get("groups", [])
   if summary_data and groups:
@@ -54,11 +58,13 @@ def _probe_port(port: int, timeout_seconds: float) -> ProviderUsage | None:
     except Exception:
       pass
 
-    return normalize_antigravity_quota_summary(
+    norm = normalize_antigravity_quota_summary(
       summary_data=summary_data,
       user_status_data=user_status_data,
       source="antigravity_agy",
     )
+    if norm.windows:
+      return norm
 
   # 2. Fallback 1: GetUserStatus
   user_status_data = None
@@ -80,10 +86,12 @@ def _probe_port(port: int, timeout_seconds: float) -> ProviderUsage | None:
     pass
 
   if user_status_data and user_status_data.get("userStatus", {}).get("cascadeModelConfigData"):
-    return normalize_antigravity_user_status_legacy(
+    norm_status = normalize_antigravity_user_status_legacy(
       user_status_data=user_status_data,
       source="antigravity_agy",
     )
+    if norm_status.windows:
+      return norm_status
 
   # 3. Fallback 2: GetCommandModelConfigs
   cmd_configs_data = None
@@ -106,10 +114,12 @@ def _probe_port(port: int, timeout_seconds: float) -> ProviderUsage | None:
 
   if cmd_configs_data and cmd_configs_data.get("clientModelConfigs"):
     wrapped = {"userStatus": {"cascadeModelConfigData": cmd_configs_data}}
-    return normalize_antigravity_user_status_legacy(
+    norm_cmd = normalize_antigravity_user_status_legacy(
       user_status_data=wrapped,
       source="antigravity_agy",
     )
+    if norm_cmd.windows:
+      return norm_cmd
 
   return None
 
@@ -150,10 +160,16 @@ def fetch_antigravity_usage(
         error="Antigravity local service is not listening. Run `agy` once in a terminal and complete Google sign-in.",
       )
 
-    for port in candidate_ports:
-      res = _probe_port(port, timeout_seconds=timeout_seconds)
-      if res is not None and res.windows:
-        return res
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+      for port in candidate_ports:
+        remaining_time = max(1.0, deadline - time.time())
+        res = _probe_port(port, timeout_seconds=min(remaining_time, 4.0))
+        if res is not None and res.windows:
+          return res
+      if time.time() >= deadline:
+        break
+      time.sleep(0.4)
 
   return ProviderUsage(
     provider="antigravity",

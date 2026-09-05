@@ -12,8 +12,9 @@ from ai_usage_monitor.windows.tcp_table import get_listening_ports_for_pid
 
 
 def find_existing_agy_listening_ports() -> list[int]:
-  """Find listening TCP ports for any already-running agy processes and their children."""
-  pids = find_running_process_pids("agy")
+  """Find listening TCP ports for any already-running agy or antigravity processes and their children."""
+  pids = set(find_running_process_pids("agy"))
+  pids.update(find_running_process_pids("antigravity"))
   all_ports: set[int] = set()
 
   for pid in pids:
@@ -54,10 +55,10 @@ def manage_agy_session(
 
   proc: subprocess.Popen[bytes] | None = None
   try:
-    # Launch agy in interactive/background mode with pipe
+    # Launch agy in non-interactive/background mode
     proc = subprocess.Popen(
       [binary],
-      stdin=subprocess.PIPE,
+      stdin=subprocess.DEVNULL,
       stdout=subprocess.DEVNULL,
       stderr=subprocess.DEVNULL,
     )

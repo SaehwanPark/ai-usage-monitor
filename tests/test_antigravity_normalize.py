@@ -130,3 +130,39 @@ def test_normalize_antigravity_user_status_legacy() -> None:
   c_win = next(w for w in usage.windows if "Claude" in w.label)
   assert c_win.used_percent == 50.0
   assert c_win.remaining_percent == 50.0
+
+
+def test_normalize_antigravity_user_status_with_model_id() -> None:
+  user_status = {
+    "userStatus": {
+      "email": "user@google.com",
+      "userTier": {"name": "Google AI Pro"},
+      "cascadeModelConfigData": {
+        "clientModelConfigs": [
+          {
+            "modelId": "gemini-3.8-flash-high",
+            "label": "Gemini 3.8 Flash (High)",
+            "modelOrAlias": {"model": "MODEL_PLACEHOLDER_M318"},
+            "quotaInfo": {"remainingFraction": 0.80, "resetTime": "2026-09-06T00:00:00Z"},
+          },
+          {
+            "modelId": "claude-sonnet-4-6",
+            "label": "Claude Sonnet 4.6 (Thinking)",
+            "quotaInfo": {"remainingFraction": 0.90, "resetTime": "2026-09-06T02:00:00Z"},
+          },
+        ]
+      },
+    }
+  }
+
+  usage = normalize_antigravity_user_status_legacy(user_status, source="antigravity_agy")
+  assert usage.provider == "antigravity"
+  assert len(usage.windows) == 2
+
+  g_win = next(w for w in usage.windows if "Gemini" in w.label)
+  assert g_win.used_percent == 20.0
+  assert g_win.remaining_percent == 80.0
+
+  c_win = next(w for w in usage.windows if "Claude" in w.label)
+  assert c_win.used_percent == 10.0
+  assert c_win.remaining_percent == 90.0
