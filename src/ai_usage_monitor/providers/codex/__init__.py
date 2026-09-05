@@ -1,0 +1,1 @@
+"""OpenAI Codex provider adapter."""

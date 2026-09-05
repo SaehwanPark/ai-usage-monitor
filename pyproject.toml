@@ -7,11 +7,24 @@ authors = [
     { name = "SaehwanPark", email = "saehwan.simon.park@gmail.com" }
 ]
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "httpx>=0.28.1",
+]
 
 [project.scripts]
-ai-usage-monitor = "ai_usage_monitor:main"
+ai-usage-monitor = "ai_usage_monitor.cli:main"
+usage = "ai_usage_monitor.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.12.9,<0.13.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "basedpyright>=1.39.10",
+    "pytest>=9.1.1",
+]
+
+[tool.basedpyright]
+typeCheckingMode = "standard"
+
