@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import subprocess
+import sys
 import time
 from typing import Generator
 from ai_usage_monitor.windows.paths import resolve_agy_binary
@@ -12,9 +13,10 @@ from ai_usage_monitor.windows.tcp_table import get_listening_ports_for_pid
 
 
 def find_existing_agy_listening_ports() -> list[int]:
-  """Find listening TCP ports for any already-running agy or antigravity processes and their children."""
+  """Find listening TCP ports for any already-running agy, antigravity, or language_server processes and their children."""
   pids = set(find_running_process_pids("agy"))
   pids.update(find_running_process_pids("antigravity"))
+  pids.update(find_running_process_pids("language_server"))
   all_ports: set[int] = set()
 
   for pid in pids:
@@ -55,12 +57,14 @@ def manage_agy_session(
 
   proc: subprocess.Popen[bytes] | None = None
   try:
-    # Launch agy in non-interactive/background mode
+    # Launch agy in non-interactive/background mode without creating a console window
+    creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
     proc = subprocess.Popen(
       [binary],
       stdin=subprocess.DEVNULL,
       stdout=subprocess.DEVNULL,
       stderr=subprocess.DEVNULL,
+      creationflags=creationflags,
     )
 
     discovered_ports: list[int] = []
