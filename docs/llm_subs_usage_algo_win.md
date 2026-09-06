@@ -1150,26 +1150,30 @@ Tell user to run `agy` interactively once and sign in.
 
 Do not automate Google login inside the usage tool.
 
-## 13.1 Pseudo-console
+## 13.1 Windows process launching & pseudo-console differences
 
-CodexBar launches `agy` under a PTY because its local server is tied to the interactive process.
+CodexBar launches `agy` under a POSIX PTY (`openpty`/`forkpty`) on macOS/Linux because its local server is tied to an interactive process, and detached Unix PTYs run with zero UI footprint.
 
-On Windows use:
+On Windows 11:
+- `agy.exe` is compiled as a Console Subsystem binary (`IMAGE_SUBSYSTEM_WINDOWS_CUI`).
+- Spawning `agy.exe` with `stdin=subprocess.PIPE` stalls `agy.exe` waiting on stream input, preventing the Language Server from binding to ports.
+- Spawning `agy.exe` without `creationflags=subprocess.CREATE_NO_WINDOW` (`0x08000000`) causes Windows to attach or allocate a console context, which may briefly flicker a console host window or appear visibly in Task Manager.
+- Instead, launching `agy.exe` with:
+  ```python
+  stdin=subprocess.DEVNULL,
+  stdout=subprocess.DEVNULL,
+  stderr=subprocess.DEVNULL,
+  creationflags=subprocess.CREATE_NO_WINDOW
+  ```
+  allows `agy.exe` to start cleanly and non-interactively in the background, bind to its loopback ports within ~200ms, and run with zero console window footprint.
 
-- ConPTY directly; or
-- a mature pseudo-terminal library.
+### 13.2 Scope of process discovery (`agy`, `antigravity`, `language_server`)
 
-The tool should:
-
-1. create pseudo-console;
-2. launch `agy`;
-3. keep stdin alive;
-4. continuously drain/discard terminal output;
-5. never interpret TUI text as quota data;
-6. wait for the localhost service to become ready;
-7. cleanly terminate only the child it owns.
-
-A plain hidden process with closed stdin may not be equivalent to an interactive `agy` session; test this explicitly before simplifying away ConPTY.
+CodexBar on macOS/Linux inspects processes matching `language_server`, `antigravity`, and `agy`.
+On Windows:
+- Standalone CLI: `agy.exe`
+- Antigravity Desktop App / IDE extension: runs `language_server.exe` (located at `%LOCALAPPDATA%\Programs\antigravity\resources\bin\language_server.exe`).
+- Process inspection must scan across all three names (`agy`, `antigravity`, and `language_server`) to reuse existing listening ports without unnecessarily spawning duplicate background instances.
 
 ---
 
