@@ -1,7 +1,9 @@
 from ai_usage_monitor.providers.antigravity.normalize import (
+  normalize_antigravity_cli_output,
   normalize_antigravity_quota_summary,
   normalize_antigravity_user_status_legacy,
 )
+
 
 def test_normalize_antigravity_quota_summary() -> None:
   quota_payload = {
@@ -96,6 +98,83 @@ def test_normalize_antigravity_quota_summary() -> None:
   assert cw.label == "Claude/GPT weekly"
   assert cw.used_percent == 0.0
   assert cw.remaining_percent == 100.0
+
+def test_normalize_antigravity_quota_summary_nested_remaining() -> None:
+  quota_payload = {
+    "response": {
+      "groups": [
+        {
+          "displayName": "Gemini Models",
+          "buckets": [
+            {
+              "bucketId": "gemini-weekly",
+              "displayName": "Weekly Limit Remaining",
+              "remaining": {"remainingFraction": 0.75},
+            }
+          ],
+        }
+      ]
+    }
+  }
+
+  usage = normalize_antigravity_quota_summary(quota_payload)
+  assert len(usage.windows) == 1
+  assert usage.windows[0].remaining_percent == 75.0
+
+
+def test_normalize_antigravity_quota_summary_skips_malformed_fraction() -> None:
+  quota_payload = {
+    "response": {
+      "groups": [
+        {
+          "displayName": "Gemini Models",
+          "buckets": [
+            {
+              "bucketId": "gemini-weekly",
+              "displayName": "Weekly Limit Remaining",
+              "remaining": {"remainingFraction": "not-a-number"},
+            }
+          ],
+        }
+      ]
+    }
+  }
+
+  usage = normalize_antigravity_quota_summary(quota_payload)
+  assert usage.windows == []
+
+
+def test_normalize_antigravity_cli_output() -> None:
+  output = (
+    "Gemini Models\tWeekly Limit Remaining\t38%\t2026-09-18T15:57:30Z\n"
+    "Gemini Models\tFive Hour Limit Remaining\t91%\t2026-09-15T02:25:23Z\n"
+    "Claude and GPT models\tWeekly Limit Remaining\t68%\t2026-09-20T15:33:05Z\n"
+    "Claude and GPT models\tFive Hour Limit Remaining\t100%\t2026-09-15T04:20:49Z"
+  )
+
+  usage = normalize_antigravity_cli_output(output)
+  assert usage.provider == "antigravity"
+  assert usage.source == "antigravity_agy"
+  assert len(usage.windows) == 4
+
+  windows = {window.id: window for window in usage.windows}
+  assert windows["gemini_weekly"].used_percent == 62.0
+  assert windows["gemini_weekly"].remaining_percent == 38.0
+  assert windows["gemini_weekly"].window_seconds == 604800
+  assert windows["gemini_weekly"].resets_at == "2026-09-18T15:57:30Z"
+  assert windows["gemini_5h"].used_percent == 9.0
+  assert windows["gemini_5h"].remaining_percent == 91.0
+  assert windows["gemini_5h"].window_seconds == 18000
+  assert windows["claude_gpt_weekly"].used_percent == 32.0
+  assert windows["claude_gpt_5h"].used_percent == 0.0
+
+
+def test_normalize_antigravity_cli_output_ignores_non_quota_rows() -> None:
+  output = "Loading quota summary...\nnot a quota row\nGemini Models\tWeekly Limit Remaining\tinvalid\t"
+
+  usage = normalize_antigravity_cli_output(output)
+  assert usage.windows == []
+
 
 def test_normalize_antigravity_user_status_legacy() -> None:
   user_status = {

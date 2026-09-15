@@ -37,7 +37,7 @@ Recommended automatic strategy:
 |---|---|---|---|
 | Codex | Read Codex OAuth credentials and call `wham/usage` | `codex app-server` JSON-RPC | Structured first-party data; CLI remains credential refresh owner |
 | Cursor | Read Cursor desktop `state.vscdb`, derive web session cookie, call Cursor dashboard APIs | User-supplied cookie header | Avoid browser-cookie decryption and browser automation |
-| Antigravity | Run/reuse `agy`, discover its localhost port, call quota endpoint | Legacy localhost endpoints; optional OAuth later | Richest observed quota data, including 5-hour and weekly pools |
+| Antigravity | Run `agy --print /usage` and parse its quota rows | None in v1; report the CLI error | Official authenticated output exposes Gemini and Claude/GPT 5-hour and weekly pools |
 
 Do **not** make browser scraping, DOM parsing, UI automation, or browser-cookie extraction part of v1.
 
@@ -1098,25 +1098,20 @@ This avoids cross-account surprises.
 
 ## 12.1 Preferred Windows strategy
 
-For this CLI, prefer the official `agy` CLI path.
+For this CLI, use the official `agy` print-mode command because it performs the same silent keyring authentication and quota retrieval as the user's `/usage` command.
 
-Antigravity's local service exposes richer quota information than the remote OAuth path and current IDE local payloads.
-
-Recommended AUTO:
+Recommended flow:
 
 ```text
-1. find/reuse an already-running agy belonging to current user
-2. otherwise launch agy in a pseudo-console
-3. discover its localhost listening port(s)
-4. probe RetrieveUserQuotaSummary
-5. fallback GetUserStatus
-6. fallback GetCommandModelConfigs
-7. terminate only the agy process launched by this invocation
+1. resolve the configured/PATH agy binary
+2. launch `agy --print /usage` without a shell
+3. parse its tab-separated quota rows
+4. terminate the one-shot process when output is complete
 ```
 
-Do not scrape `agy` terminal output.
+Do not scrape an interactive `agy` TUI. Print-mode output is the command's non-interactive result and currently contains one row for each Gemini and Claude/GPT 5-hour or weekly bucket. It does not expose account identity, so the normalized Antigravity result may have a null `account` rather than performing a private RPC lookup.
 
-The terminal process exists only to keep its internal local service alive.
+The private loopback language-server protocol remains version-sensitive: current `agy` builds may require a CSRF token that the CLI does not publish. It is not the primary retrieval path for this implementation.
 
 ---
 
@@ -1150,34 +1145,27 @@ Tell user to run `agy` interactively once and sign in.
 
 Do not automate Google login inside the usage tool.
 
-## 13.1 Windows process launching & pseudo-console differences
+## 13.1 Windows process launching
 
-CodexBar launches `agy` under a POSIX PTY (`openpty`/`forkpty`) on macOS/Linux because its local server is tied to an interactive process, and detached Unix PTYs run with zero UI footprint.
+On Windows 11, `agy.exe` is compiled as a Console Subsystem binary (`IMAGE_SUBSYSTEM_WINDOWS_CUI`). Run print mode with no shell and:
 
-On Windows 11:
-- `agy.exe` is compiled as a Console Subsystem binary (`IMAGE_SUBSYSTEM_WINDOWS_CUI`).
-- Spawning `agy.exe` with `stdin=subprocess.PIPE` stalls `agy.exe` waiting on stream input, preventing the Language Server from binding to ports.
-- Spawning `agy.exe` without `creationflags=subprocess.CREATE_NO_WINDOW` (`0x08000000`) causes Windows to attach or allocate a console context, which may briefly flicker a console host window or appear visibly in Task Manager.
-- Instead, launching `agy.exe` with:
-  ```python
-  stdin=subprocess.DEVNULL,
-  stdout=subprocess.DEVNULL,
-  stderr=subprocess.DEVNULL,
-  creationflags=subprocess.CREATE_NO_WINDOW
-  ```
-  allows `agy.exe` to start cleanly and non-interactively in the background, bind to its loopback ports within ~200ms, and run with zero console window footprint.
+```python
+stdin=subprocess.DEVNULL,
+stdout=subprocess.PIPE,
+stderr=subprocess.PIPE,
+creationflags=subprocess.CREATE_NO_WINDOW,
+timeout=...
+```
 
-### 13.2 Scope of process discovery (`agy`, `antigravity`, `language_server`)
+This keeps the lookup silent and bounds the lifetime of the one-shot process. A PTY and long-lived loopback server are not required for the supported retrieval path.
 
-CodexBar on macOS/Linux inspects processes matching `language_server`, `antigravity`, and `agy`.
-On Windows:
-- Standalone CLI: `agy.exe`
-- Antigravity Desktop App / IDE extension: runs `language_server.exe` (located at `%LOCALAPPDATA%\Programs\antigravity\resources\bin\language_server.exe`).
-- Process inspection must scan across all three names (`agy`, `antigravity`, and `language_server`) to reuse existing listening ports without unnecessarily spawning duplicate background instances.
+### 13.2 Scope of local process discovery (legacy/future fallback)
+
+The supported print-mode path does not scan or reuse `agy`, `antigravity`, or `language_server` processes. Those products expose different private loopback authentication contracts, so a future local fallback must identify the owning product before reusing a port.
 
 ---
 
-# 14. Antigravity port discovery on Windows
+# 14. Antigravity port discovery on Windows (legacy/future fallback)
 
 CodexBar uses PID-scoped listener discovery on macOS/Linux.
 
@@ -1218,9 +1206,11 @@ but the production executable should not depend on PowerShell if a native API is
 
 ---
 
-# 15. Antigravity localhost protocol
+# 15. Antigravity localhost protocol (legacy/future fallback)
 
-Try each candidate listening port.
+The supported implementation does not probe arbitrary local language-server ports; it invokes `agy --print /usage`. If a future local fallback is added, it must first identify the owning product and its authentication requirements because current app and CLI builds do not share the same CSRF behavior.
+
+Try each candidate listening port only after obtaining the matching token for that process.
 
 The preferred endpoint:
 
@@ -1236,11 +1226,7 @@ Content-Length: <bytes>
 Connect-Protocol-Version: 1
 ```
 
-For the `agy` CLI source:
-
-```text
-DO NOT send X-Codeium-Csrf-Token
-```
+CSRF handling is product/version-specific. Desktop language servers expose a token through their launch configuration, while current CLI builds may require a token that is not published. Never assume that omitting `X-Codeium-Csrf-Token` is valid.
 
 Body:
 
@@ -1288,7 +1274,15 @@ This is a security boundary, not just a networking detail.
 
 # 17. Antigravity quota-summary parsing
 
-Preferred response structure conceptually contains:
+The supported `agy --print /usage` output is tab-separated with four columns:
+
+```text
+<group display name>\t<bucket display name>\t<remaining percent>\t<reset timestamp>
+```
+
+Recognized rows map to the same four normalized windows described below. The percentage is quota remaining, so normalized used percentage is `100 - remaining`.
+
+The private RPC response, retained for a future fallback, conceptually contains:
 
 ```text
 response.groups[]
@@ -1458,9 +1452,9 @@ Unknown model IDs should be retained as extras when they contain real quota data
 
 ---
 
-# 20. Antigravity readiness polling
+# 20. Antigravity readiness polling (legacy/future local fallback)
 
-A newly launched `agy` may bind a TCP port before its quota API is ready.
+The supported print-mode command does not require local-port readiness polling. If a future local fallback launches a long-lived `agy` server, a newly launched process may bind a TCP port before its quota API is ready.
 
 Therefore:
 
@@ -1625,23 +1619,18 @@ locate agy
   +-- missing -> NOT INSTALLED
   |
   v
-reuse compatible running agy?
-  |
-  +-- no -> launch owned agy in ConPTY
-  |
-  v
-discover PID-scoped listening ports
-  |
-  v
-poll endpoints until parseable
-  |
-  +-- quota summary -> NORMALIZE
-  |
-  +-- GetUserStatus -> NORMALIZE LEGACY
-  |
-  +-- command configs -> NORMALIZE LEGACY
+launch `agy --print /usage` without a shell
   |
   +-- timeout -> actionable error
+  |
+  +-- nonzero exit -> auth/command error
+  |
+  v
+parse tab-separated quota rows
+  |
+  +-- no recognized rows -> unknown quota error
+  |
+  +-- recognized rows -> NORMALIZE
 ```
 
 ---
@@ -1922,9 +1911,7 @@ Cursor
 
 Antigravity
   [ok] agy found
-  [ok] agy authenticated
-  [ok] local quota service reachable
-  [ok] RetrieveUserQuotaSummary supported
+  [ok] `agy --print /usage` returned quota
 ```
 
 Failure example:
@@ -1932,7 +1919,7 @@ Failure example:
 ```text
 Antigravity
   [ok] agy found
-  [fail] agy is not signed in
+  [fail] `agy --print /usage` failed
          Run `agy` once in a terminal and complete Google sign-in.
 ```
 
@@ -1950,7 +1937,8 @@ Use fixtures for:
 - Cursor SQLite databases;
 - Cursor usage-summary responses;
 - Cursor legacy request-plan responses;
-- Antigravity quota-summary payloads;
+- Antigravity `agy --print /usage` tab-separated output;
+- Antigravity quota-summary payloads for the legacy/future local fallback;
 - Antigravity legacy user-status payloads.
 
 Never commit real tokens or cookies.
@@ -2017,24 +2005,17 @@ Add an integration test against a temporary SQLite database with `ItemTable`.
 Required:
 
 ```text
-PID-scoped port discovery
-only loopback URLs allowed
-self-signed TLS exception cannot escape loopback
-RetrieveUserQuotaSummary preferred
-forceRefresh=true
-CLI source sends no CSRF header
-Connect-Protocol-Version=1
+official `agy --print /usage` invocation
+no shell / hidden Windows console
+TSV row parsing
 summary remaining -> used conversion
 session alias recognition
 weekly recognition
-unknown bucket retained
-empty/unusable summary falls back
-GetUserStatus parsing
-GetCommandModelConfigs parsing
-cold agy readiness retries
-owned agy is terminated
-pre-existing agy is never killed
-timeout does not leave child
+unknown/malformed rows ignored
+empty output is an actionable error
+nonzero exit is an actionable error
+timeout terminates the child
+nested `remaining.remainingFraction` RPC fixture remains compatible
 ```
 
 A security test should explicitly try to redirect the loopback HTTP client to an external URL and verify rejection.
@@ -2070,13 +2051,12 @@ Before calling the implementation complete, validate on a real Windows 11 machin
 ## Antigravity
 
 1. Install and sign into `agy`.
-2. Verify tool can launch it under ConPTY.
-3. Verify PID-scoped port discovery.
-4. Compare four quota windows against Antigravity's model quota UI.
-5. Test a cold launch.
-6. Test reuse of an already-running `agy`.
-7. Confirm the tool never kills a pre-existing user-owned `agy`.
-8. Confirm no terminal-output parsing is used.
+2. Verify the tool can run `agy --print /usage` without a visible console.
+3. Compare four quota windows against Antigravity's model quota UI.
+4. Test a cold invocation.
+5. Test an already-running `agy` does not affect the result.
+6. Test sign-out/nonzero exit and timeout handling.
+7. Confirm only the official print-mode output is parsed; no interactive TUI or private loopback response is scraped.
 
 ---
 
