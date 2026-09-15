@@ -126,6 +126,7 @@ def main(args: Sequence[str] | None = None) -> int:
     cookie = parsed.cookie or cfg.cursor_cookie
     usage = fetch_cursor_usage(
       cookie_override=cookie,
+      source_preference=parsed.source,
       timeout_seconds=timeout,
     )
     if parsed.json:
@@ -158,6 +159,7 @@ def main(args: Sequence[str] | None = None) -> int:
   )
   cursor_res = fetch_cursor_usage(
     cookie_override=cookie,
+    source_preference=parsed.source,
     timeout_seconds=timeout,
   )
   antigravity_res = fetch_antigravity_usage(

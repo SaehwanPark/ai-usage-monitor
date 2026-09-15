@@ -65,61 +65,92 @@ def find_running_process_pids(process_name: str) -> list[int]:
       if name_lower in exe.lower() or (name_lower.endswith(".exe") and exe.lower() == name_lower)
     ]
 
-  # Fallback to tasklist
-  pids: list[int] = []
+  if sys.platform == "win32":
+    # Fallback to tasklist on Windows
+    pids: list[int] = []
+    try:
+      out = subprocess.check_output(["tasklist", "/FO", "CSV", "/NH"], text=True, errors="replace")
+      for line in out.splitlines():
+        parts = [p.strip('"') for p in line.split(",")]
+        if len(parts) >= 2:
+          exe, pid_s = parts[0], parts[1]
+          if name_lower in exe.lower():
+            try:
+              pids.append(int(pid_s))
+            except ValueError:
+              pass
+    except Exception:
+      pass
+    return pids
+
+  # POSIX / macOS fallback using ps
+  posix_pids: list[int] = []
   try:
-    out = subprocess.check_output(["tasklist", "/FO", "CSV", "/NH"], text=True, errors="replace")
-    for line in out.splitlines():
-      parts = [p.strip('"') for p in line.split(",")]
-      if len(parts) >= 2:
-        exe, pid_s = parts[0], parts[1]
-        if name_lower in exe.lower():
+    out = subprocess.check_output(["ps", "-eo", "pid,command"], text=True, errors="replace")
+    for line in out.splitlines()[1:]:
+      parts = line.strip().split(None, 1)
+      if len(parts) == 2:
+        pid_s, cmd = parts
+        if name_lower in cmd.lower():
           try:
-            pids.append(int(pid_s))
+            posix_pids.append(int(pid_s))
           except ValueError:
             pass
   except Exception:
     pass
-  return pids
+  return posix_pids
 
 
 def get_process_children_pids(parent_pid: int) -> list[int]:
   """Return direct and indirect child PIDs for a given parent PID."""
   entries = _snapshot_processes()
-  if not entries:
-    return []
+  if entries:
+    from collections import defaultdict
 
-  # Build child mapping
-  from collections import defaultdict
+    tree: dict[int, list[int]] = defaultdict(list)
+    for pid, ppid, _ in entries:
+      tree[ppid].append(pid)
 
-  tree: dict[int, list[int]] = defaultdict(list)
-  for pid, ppid, _ in entries:
-    tree[ppid].append(pid)
+    result: list[int] = []
+    stack = list(tree.get(parent_pid, []))
+    while stack:
+      curr = stack.pop()
+      result.append(curr)
+      stack.extend(tree.get(curr, []))
 
-  result: list[int] = []
-  stack = list(tree.get(parent_pid, []))
-  while stack:
-    curr = stack.pop()
-    result.append(curr)
-    stack.extend(tree.get(curr, []))
+    return result
 
-  return result
+  if sys.platform != "win32":
+    try:
+      out = subprocess.check_output(["pgrep", "-P", str(parent_pid)], text=True, errors="replace")
+      return [int(p) for p in out.splitlines() if p.strip().isdigit()]
+    except Exception:
+      return []
+
+  return []
 
 
 def is_pid_running(pid: int) -> bool:
   """Check if a process with the given PID is currently active."""
-  if sys.platform != "win32":
-    return False
+  if sys.platform == "win32":
+    try:
+      kernel32 = ctypes.WinDLL("kernel32.dll")
+      # PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+      h_proc = kernel32.OpenProcess(0x1000, False, pid)
+      if h_proc:
+        exit_code = wintypes.DWORD()
+        kernel32.GetExitCodeProcess(h_proc, ctypes.byref(exit_code))
+        kernel32.CloseHandle(h_proc)
+        # STILL_ACTIVE = 259
+        return exit_code.value == 259
+      return False
+    except Exception:
+      return False
+
+  # POSIX / macOS
+  import os
   try:
-    kernel32 = ctypes.WinDLL("kernel32.dll")
-    # PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-    h_proc = kernel32.OpenProcess(0x1000, False, pid)
-    if h_proc:
-      exit_code = wintypes.DWORD()
-      kernel32.GetExitCodeProcess(h_proc, ctypes.byref(exit_code))
-      kernel32.CloseHandle(h_proc)
-      # STILL_ACTIVE = 259
-      return exit_code.value == 259
-    return False
-  except Exception:
+    os.kill(pid, 0)
+    return True
+  except (OSError, ProcessLookupError):
     return False
