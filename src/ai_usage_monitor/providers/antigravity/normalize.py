@@ -67,6 +67,14 @@ def _parse_cli_remaining_fraction(raw_percent: str) -> float | None:
   return value / 100.0
 
 
+def _coerce_fraction(raw_fraction: Any) -> float | None:
+  """Convert a structured quota fraction without letting malformed data escape."""
+  try:
+    return float(raw_fraction)
+  except (TypeError, ValueError):
+    return None
+
+
 def normalize_antigravity_quota_summary(
   summary_data: dict[str, Any],
   user_status_data: dict[str, Any] | None = None,
@@ -76,7 +84,7 @@ def normalize_antigravity_quota_summary(
   account = _extract_account(user_status_data)
 
   resp_obj = summary_data.get("response", {})
-  groups = resp_obj.get("groups", [])
+  groups = resp_obj.get("groups", []) if isinstance(resp_obj, dict) else []
   windows: list[UsageWindow] = []
 
   if isinstance(groups, list):
@@ -95,11 +103,9 @@ def normalize_antigravity_quota_summary(
         bkt_display = bkt.get("displayName", "")
         window_raw = bkt.get("window")
         remaining_obj = bkt.get("remaining")
-        rem_frac = (
-          remaining_obj.get("remainingFraction")
-          if isinstance(remaining_obj, dict)
-          else bkt.get("remainingFraction")
-        )
+        rem_frac = bkt.get("remainingFraction")
+        if isinstance(remaining_obj, dict):
+          rem_frac = remaining_obj.get("remainingFraction", rem_frac)
         reset_time = bkt.get("resetTime")
         desc = bkt.get("description")
 
@@ -122,11 +128,15 @@ def normalize_antigravity_quota_summary(
 
         label = f"{family} {cadence_suffix}"
 
+        remaining_fraction = _coerce_fraction(rem_frac)
+        if remaining_fraction is None:
+          continue
+
         windows.append(
           create_window_from_fraction(
             window_id=win_id,
             label=label,
-            remaining_fraction=float(rem_frac),
+            remaining_fraction=remaining_fraction,
             window_seconds=window_sec if window_sec > 0 else None,
             resets_at=str(reset_time) if reset_time else None,
             reset_description=str(desc) if desc else None,
@@ -234,7 +244,10 @@ def normalize_antigravity_user_status_legacy(
       if rem is None:
         continue
 
-      rem_f = float(rem)
+      rem_f = _coerce_fraction(rem)
+      if rem_f is None:
+        continue
+
       if "gemini" in m_name:
         if gemini_min_rem is None or rem_f < gemini_min_rem:
           gemini_min_rem = rem_f

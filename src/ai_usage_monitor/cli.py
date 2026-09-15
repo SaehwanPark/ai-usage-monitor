@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import argparse
 import sys
-from typing import Sequence
+from collections.abc import Sequence
+
 from ai_usage_monitor.config import load_config
 from ai_usage_monitor.doctor import run_doctor
-from ai_usage_monitor.format import format_provider_human, format_providers_human, format_providers_json
-from ai_usage_monitor.model import ProviderUsage
+from ai_usage_monitor.format import (
+  format_provider_human,
+  format_providers_human,
+  format_providers_json,
+)
 from ai_usage_monitor.providers.antigravity.provider import fetch_antigravity_usage
 from ai_usage_monitor.providers.codex.provider import fetch_codex_usage
 from ai_usage_monitor.providers.cursor.provider import fetch_cursor_usage
@@ -19,7 +23,7 @@ def _classify_error_code(error_msg: str) -> int:
   lower = error_msg.lower()
   if any(k in lower for k in ("auth", "expired", "sign-in", "sign in", "login", "cookie rejected")):
     return 3
-  if any(k in lower for k in ("timeout", "network", "unavailable", "connection failed")):
+  if any(k in lower for k in ("timeout", "timed out", "network", "unavailable", "connection failed")):
     return 4
   if any(k in lower for k in ("not found", "not installed", "missing")):
     return 5

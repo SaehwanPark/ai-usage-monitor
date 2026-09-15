@@ -1,7 +1,14 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
+
 import pytest
-from ai_usage_monitor.cli import main
+
+from ai_usage_monitor.cli import _classify_error_code, main
 from ai_usage_monitor.model import ProviderUsage
+
+
+def test_timeout_errors_use_network_exit_code() -> None:
+  assert _classify_error_code("agy timed out after 10 seconds") == 4
+
 
 def test_cli_doctor(capsys: pytest.CaptureFixture[str]) -> None:
   with patch("ai_usage_monitor.cli.run_doctor", return_value="Mock Doctor"):

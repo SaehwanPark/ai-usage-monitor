@@ -122,6 +122,28 @@ def test_normalize_antigravity_quota_summary_nested_remaining() -> None:
   assert usage.windows[0].remaining_percent == 75.0
 
 
+def test_normalize_antigravity_quota_summary_skips_malformed_fraction() -> None:
+  quota_payload = {
+    "response": {
+      "groups": [
+        {
+          "displayName": "Gemini Models",
+          "buckets": [
+            {
+              "bucketId": "gemini-weekly",
+              "displayName": "Weekly Limit Remaining",
+              "remaining": {"remainingFraction": "not-a-number"},
+            }
+          ],
+        }
+      ]
+    }
+  }
+
+  usage = normalize_antigravity_quota_summary(quota_payload)
+  assert usage.windows == []
+
+
 def test_normalize_antigravity_cli_output() -> None:
   output = (
     "Gemini Models\tWeekly Limit Remaining\t38%\t2026-09-18T15:57:30Z\n"

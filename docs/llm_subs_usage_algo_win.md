@@ -37,7 +37,7 @@ Recommended automatic strategy:
 |---|---|---|---|
 | Codex | Read Codex OAuth credentials and call `wham/usage` | `codex app-server` JSON-RPC | Structured first-party data; CLI remains credential refresh owner |
 | Cursor | Read Cursor desktop `state.vscdb`, derive web session cookie, call Cursor dashboard APIs | User-supplied cookie header | Avoid browser-cookie decryption and browser automation |
-| Antigravity | Run/reuse `agy`, discover its localhost port, call quota endpoint | Legacy localhost endpoints; optional OAuth later | Richest observed quota data, including 5-hour and weekly pools |
+| Antigravity | Run `agy --print /usage` and parse its quota rows | None in v1; report the CLI error | Official authenticated output exposes Gemini and Claude/GPT 5-hour and weekly pools |
 
 Do **not** make browser scraping, DOM parsing, UI automation, or browser-cookie extraction part of v1.
 
@@ -1109,7 +1109,7 @@ Recommended flow:
 4. terminate the one-shot process when output is complete
 ```
 
-Do not scrape an interactive `agy` TUI. Print-mode output is the command's non-interactive result and currently contains one row for each Gemini and Claude/GPT 5-hour or weekly bucket.
+Do not scrape an interactive `agy` TUI. Print-mode output is the command's non-interactive result and currently contains one row for each Gemini and Claude/GPT 5-hour or weekly bucket. It does not expose account identity, so the normalized Antigravity result may have a null `account` rather than performing a private RPC lookup.
 
 The private loopback language-server protocol remains version-sensitive: current `agy` builds may require a CSRF token that the CLI does not publish. It is not the primary retrieval path for this implementation.
 
