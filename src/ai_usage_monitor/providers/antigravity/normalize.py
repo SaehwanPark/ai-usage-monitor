@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
+
 from ai_usage_monitor.model import (
   AccountIdentity,
   ProviderUsage,
@@ -13,7 +14,7 @@ from ai_usage_monitor.model import (
 
 
 def _now_utc() -> str:
-  return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+  return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _resolve_cadence(bucket_id: str, display_name: str, window: str | None) -> tuple[str, int]:
@@ -52,6 +53,20 @@ def _extract_account(user_status_data: dict[str, Any] | None) -> AccountIdentity
   )
 
 
+def _parse_cli_remaining_fraction(raw_percent: str) -> float | None:
+  """Parse the percentage remaining emitted by `agy --print /usage`."""
+  value_text = raw_percent.strip()
+  if value_text.endswith("%"):
+    value_text = value_text[:-1].strip()
+  try:
+    value = float(value_text)
+  except ValueError:
+    return None
+  if not 0.0 <= value <= 100.0:
+    return None
+  return value / 100.0
+
+
 def normalize_antigravity_quota_summary(
   summary_data: dict[str, Any],
   user_status_data: dict[str, Any] | None = None,
@@ -79,7 +94,12 @@ def normalize_antigravity_quota_summary(
         bkt_id = bkt.get("bucketId", "")
         bkt_display = bkt.get("displayName", "")
         window_raw = bkt.get("window")
-        rem_frac = bkt.get("remainingFraction")
+        remaining_obj = bkt.get("remaining")
+        rem_frac = (
+          remaining_obj.get("remainingFraction")
+          if isinstance(remaining_obj, dict)
+          else bkt.get("remainingFraction")
+        )
         reset_time = bkt.get("resetTime")
         desc = bkt.get("description")
 
@@ -118,6 +138,58 @@ def normalize_antigravity_quota_summary(
     account=account,
     source=source,
     windows=windows,
+    credits=None,
+    spend=None,
+    fetched_at=_now_utc(),
+    warnings=[],
+  )
+
+
+def normalize_antigravity_cli_output(
+  output: str,
+  source: str = "antigravity_agy",
+) -> ProviderUsage:
+  """Normalize the tab-separated rows emitted by `agy --print /usage`."""
+  windows_by_id: dict[str, UsageWindow] = {}
+
+  for line in output.splitlines():
+    columns = [column.strip() for column in line.split("\t")]
+    if len(columns) < 4:
+      continue
+
+    group_name, bucket_name, remaining_text, reset_time = columns[:4]
+    group_lower = group_name.lower()
+    if "gemini" in group_lower:
+      family = "Gemini"
+      family_id = "gemini"
+    elif "claude" in group_lower or "gpt" in group_lower:
+      family = "Claude/GPT"
+      family_id = "claude_gpt"
+    else:
+      continue
+
+    cadence_suffix, window_seconds = _resolve_cadence("", bucket_name, None)
+    if cadence_suffix not in ("5h", "weekly"):
+      continue
+
+    remaining_fraction = _parse_cli_remaining_fraction(remaining_text)
+    if remaining_fraction is None:
+      continue
+
+    window_id = f"{family_id}_{cadence_suffix}"
+    windows_by_id[window_id] = create_window_from_fraction(
+      window_id=window_id,
+      label=f"{family} {cadence_suffix}",
+      remaining_fraction=remaining_fraction,
+      window_seconds=window_seconds,
+      resets_at=reset_time or None,
+    )
+
+  return ProviderUsage(
+    provider="antigravity",
+    account=None,
+    source=source,
+    windows=list(windows_by_id.values()),
     credits=None,
     spend=None,
     fetched_at=_now_utc(),
@@ -167,10 +239,11 @@ def normalize_antigravity_user_status_legacy(
         if gemini_min_rem is None or rem_f < gemini_min_rem:
           gemini_min_rem = rem_f
           gemini_reset = str(res_time) if res_time else None
-      elif any(k in m_name for k in ("claude", "gpt")):
-        if claude_min_rem is None or rem_f < claude_min_rem:
-          claude_min_rem = rem_f
-          claude_reset = str(res_time) if res_time else None
+      elif any(k in m_name for k in ("claude", "gpt")) and (
+        claude_min_rem is None or rem_f < claude_min_rem
+      ):
+        claude_min_rem = rem_f
+        claude_reset = str(res_time) if res_time else None
 
   windows: list[UsageWindow] = []
   if gemini_min_rem is not None:

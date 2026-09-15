@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import time
+
 from ai_usage_monitor.config import load_config
-from ai_usage_monitor.providers.antigravity.client import post_loopback_json
-from ai_usage_monitor.providers.antigravity.discovery import find_existing_agy_listening_ports
-from ai_usage_monitor.providers.codex.auth import decode_jwt_exp, is_token_fresh, load_codex_credentials
+from ai_usage_monitor.providers.antigravity.provider import fetch_antigravity_usage
+from ai_usage_monitor.providers.codex.auth import (
+  decode_jwt_exp,
+  is_token_fresh,
+  load_codex_credentials,
+)
 from ai_usage_monitor.providers.cursor.db import read_cursor_access_token
 from ai_usage_monitor.providers.cursor.session import parse_cursor_jwt
 from ai_usage_monitor.windows.paths import (
@@ -15,7 +19,6 @@ from ai_usage_monitor.windows.paths import (
   resolve_agy_binary,
   resolve_codex_binary,
 )
-from ai_usage_monitor.windows.process import find_running_process_pids
 
 
 def _check_codex() -> list[str]:
@@ -102,30 +105,14 @@ def _check_antigravity() -> list[str]:
     lines.append("         Install Google Antigravity CLI and ensure 'agy' is on PATH.")
     return lines
 
-  pids = find_running_process_pids("agy")
-  if pids:
-    lines.append(f"  [ok] running agy process detected (PID(s): {', '.join(str(p) for p in pids)})")
+  usage = fetch_antigravity_usage(
+    cli_path=cfg.antigravity_cli,
+    timeout_seconds=cfg.timeout_seconds,
+  )
+  if usage.error:
+    lines.append(f"  [fail] `agy --print /usage` failed: {usage.error}")
   else:
-    lines.append("  [info] no running agy process currently active (will launch on demand)")
-
-  ports = find_existing_agy_listening_ports()
-  if ports:
-    lines.append(f"  [ok] active listening ports detected: {ports}")
-    # Probe quota endpoint on first port
-    for p in ports:
-      try:
-        data = post_loopback_json(
-          port=p,
-          path="/exa.language_server_pb.LanguageServerService/RetrieveUserQuotaSummary",
-          payload={"forceRefresh": True},
-          timeout_seconds=2.0,
-        )
-        if data and data.get("response", {}).get("groups"):
-          lines.append(f"  [ok] local quota service reachable on port {p}")
-          lines.append("  [ok] RetrieveUserQuotaSummary supported")
-          break
-      except Exception:
-        pass
+    lines.append("  [ok] `agy --print /usage` returned quota")
 
   return lines
 

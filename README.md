@@ -74,17 +74,16 @@ Environment variable overrides:
 
 Users transitioning from macOS/Linux [CodexBar](https://github.com/steipete/CodexBar) to Windows 11 may wonder why background process behavior differs or why an additional instance might be observed:
 
-1. **Direct Google OAuth API vs. Local Loopback Probe**:
-   - On macOS/Linux, CodexBar supports an optional remote OAuth fetch mode: it reads stored OAuth tokens (`~/.codexbar/antigravity/oauth_creds.json` or macOS Keychain) and directly calls Google's Cloud Code / Code Assist quota endpoints (`daily-cloudcode-pa.googleapis.com`) over HTTPS. When operating in remote mode, **no local CLI process is spawned**.
-   - `ai-usage-monitor` prioritizes querying the official local Language Server (`/exa.language_server_pb.LanguageServerService/RetrieveUserQuotaSummary`) because it provides the richest real-time rate-limit breakdown (5-hour session buckets, weekly buckets, and reset descriptions).
+1. **Use the official `agy /usage` command**:
+   - `ai-usage-monitor` invokes `agy --print /usage` and parses its tab-separated quota rows. The official command performs silent keyring authentication and retrieves the same quota summary shown by Antigravity.
+   - This avoids depending on Antigravity's private loopback RPC authentication, whose CSRF-token behavior differs between app and CLI versions.
 
-2. **POSIX PTY vs. Windows Console Subsystem (`CREATE_NO_WINDOW`)**:
-   - When CodexBar falls back to running `agy` locally on macOS/Linux, it spawns `agy` inside an allocated POSIX pseudoterminal (PTY via `openpty`/`forkpty`). Unix background processes in detached PTYs have zero graphical footprint (no Dock icon, no terminal window).
-   - On Windows, `agy.exe` is compiled as a Console subsystem binary (`IMAGE_SUBSYSTEM_WINDOWS_CUI`). Spawning it without special flags causes Windows to allocate or attach a console context, which could briefly flicker a console host window or appear prominently in Task Manager.
-   - `ai-usage-monitor` handles this by launching cold-start sessions with `stdin=subprocess.DEVNULL` and `creationflags=subprocess.CREATE_NO_WINDOW`, ensuring completely silent, invisible background execution that terminates cleanly immediately after reading quota.
+2. **Windows Console Subsystem (`CREATE_NO_WINDOW`)**:
+   - On Windows, `agy.exe` is compiled as a Console subsystem binary (`IMAGE_SUBSYSTEM_WINDOWS_CUI`). Spawning it without special flags can allocate or attach a visible console context.
+   - `ai-usage-monitor` runs the print-mode command with `stdin=subprocess.DEVNULL` and `creationflags=subprocess.CREATE_NO_WINDOW`, keeping the one-shot lookup silent and ensuring the process is cleaned up after the quota is read.
 
-3. **Multi-Process Discovery (`agy`, `antigravity`, `language_server`)**:
-   - If you already have an Antigravity Desktop app or VS Code extension running, its embedded service is named `language_server.exe` (located at `%LOCALAPPDATA%\Programs\antigravity\resources\bin\language_server.exe`).
-   - `ai-usage-monitor` scans listening ports across `agy.exe`, `antigravity.exe`, and `language_server.exe` using the Windows IP Helper API (`GetExtendedTcpTable`). If an IDE or existing CLI session is active, its port is **reused immediately without spawning an additional process**.
+3. **No desktop-process reuse**:
+   - Antigravity Desktop and IDE instances expose private, dynamically assigned loopback services with version-specific CSRF requirements.
+   - The provider deliberately uses the official `agy` command instead of probing arbitrary `language_server.exe` ports, so the result follows the same authenticated path as `/usage`.
 
 
