@@ -1,9 +1,10 @@
 # AI Usage Monitor CLI Tool
 
-## Algorithmic References
+## Documentation & References
 
+- Refer to [the troubleshooting guide](docs/troubleshooting.md) for diagnostics, credential discovery, and common issues.
 - Algorithm details were close or similar to what [CodexBar](https://codexbar.app/) uses.
-- Refer to [the algorithm detail document](docs\llm_subs_usage_algo_win.md)
+- Refer to [the algorithm detail document](docs/llm_subs_usage_algo_win.md)
 
 ## Development Coding Rules
 

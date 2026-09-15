@@ -13,12 +13,14 @@ from ai_usage_monitor.providers.codex.auth import (
 )
 from ai_usage_monitor.providers.cursor.db import read_cursor_access_token
 from ai_usage_monitor.providers.cursor.session import parse_cursor_jwt
-from ai_usage_monitor.windows.paths import (
+from ai_usage_monitor.paths import (
   get_codex_auth_path,
   get_cursor_db_path,
   resolve_agy_binary,
   resolve_codex_binary,
+  resolve_cursor_binary,
 )
+from ai_usage_monitor.providers.cursor.cli_auth import read_cursor_cli_credentials
 
 
 def _check_codex() -> list[str]:
@@ -62,33 +64,63 @@ def _check_codex() -> list[str]:
 def _check_cursor() -> list[str]:
   lines = ["Cursor"]
   cfg = load_config()
+  has_valid_creds = False
+
+  # 1. Desktop check
   db_path = get_cursor_db_path()
-
   if db_path.is_file():
-    lines.append(f"  [ok] state.vscdb found: {db_path}")
+    lines.append(f"  [ok] desktop state.vscdb found: {db_path}")
+    raw_token = read_cursor_access_token(db_path)
+    if raw_token:
+      lines.append("  [ok] desktop access token present in state.vscdb")
+      claims = parse_cursor_jwt(raw_token)
+      if claims:
+        if claims.is_fresh:
+          left_secs = claims.exp - time.time()
+          left_h = int(left_secs // 3600)
+          left_m = int((left_secs % 3600) // 60)
+          lines.append(f"  [ok] desktop token is fresh (expires in {left_h}h {left_m}m)")
+          has_valid_creds = True
+        else:
+          lines.append("  [warn] desktop access token is expired")
+          lines.append("         Restart Cursor desktop to refresh.")
+      else:
+        lines.append("  [fail] desktop access token is malformed")
+    else:
+      lines.append("  [warn] no access token in desktop state.vscdb")
   else:
-    lines.append(f"  [warn] state.vscdb not found at: {db_path}")
+    lines.append(f"  [info] desktop state.vscdb not found at: {db_path}")
 
-  raw_token = read_cursor_access_token(db_path)
-  if raw_token:
-    lines.append("  [ok] cursorAuth/accessToken found in SQLite database")
-    claims = parse_cursor_jwt(raw_token)
-    if claims:
-      if claims.is_fresh:
-        left_secs = claims.exp - time.time()
+  # 2. CLI check
+  cli_bin = resolve_cursor_binary()
+  if cli_bin:
+    lines.append(f"  [ok] Cursor CLI binary found: {cli_bin}")
+  cli_creds = read_cursor_cli_credentials()
+  if cli_creds:
+    lines.append(f"  [ok] CLI credentials found ({cli_creds.source_detail})")
+    cli_claims = parse_cursor_jwt(cli_creds.access_token)
+    if cli_claims:
+      if cli_claims.is_fresh:
+        left_secs = cli_claims.exp - time.time()
         left_h = int(left_secs // 3600)
         left_m = int((left_secs % 3600) // 60)
-        lines.append(f"  [ok] token is fresh (expires in {left_h}h {left_m}m)")
+        lines.append(f"  [ok] CLI token is fresh (expires in {left_h}h {left_m}m)")
+        has_valid_creds = True
       else:
-        lines.append("  [fail] desktop access token is expired")
-        lines.append("         Focus/restart Cursor desktop to refresh, or configure a manual cookie.")
+        lines.append("  [warn] CLI access token is expired (run `cursor login` to refresh)")
     else:
-      lines.append("  [fail] token is malformed")
+      lines.append("  [fail] CLI access token is malformed")
   else:
-    lines.append("  [warn] no access token in state.vscdb")
+    lines.append("  [info] CLI credentials not found")
 
+  # 3. Manual cookie check
   if cfg.cursor_cookie:
     lines.append("  [ok] manual Cursor cookie configured")
+    has_valid_creds = True
+
+  if not has_valid_creds:
+    lines.append("  [fail] no valid Cursor credentials found")
+    lines.append("         Log into Cursor desktop, run `cursor login`, or configure LLM_USAGE_CURSOR_COOKIE.")
 
   return lines
 
